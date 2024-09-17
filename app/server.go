@@ -50,34 +50,42 @@ func handleRequest(conn net.Conn) {
 
 func parseRESP(request []byte, conn net.Conn) {
 	// RESP arrays format: *<number-of-elements>\r\n<element-1>...<element-n>
-
-	// initialize using conn?
 	reader := bufio.NewReader(bytes.NewReader(request))
 	for {
-		// read until the first delimiter to get the number of elements
-		_, err := reader.ReadString(byte('\n'))
-		if err == io.EOF {
-			return
-		}
+		// get number of elements in array
+		numElementString, err := reader.ReadString(byte('\n'))
 		if err != nil {
-			fmt.Println("Error parsing request:", err)
+			if err != io.EOF {
+				fmt.Println("Error parsing request:", err)
+			}
 			return
 		}
-		for {
-			data, err := reader.ReadString(byte('\n'))
-			// remove delimiter
-			data = strings.TrimSuffix(data, "\r\n")
+		if numElementString[0] != '*' {
+			fmt.Println("Error: expected array")
+			return
+		}
+		numElementString = strings.TrimSuffix(numElementString, "\r\n")
+		numElements, err := strconv.Atoi(numElementString[1:])
+		if err != nil {
+			fmt.Println("Error parsing number of elmements:", err)
+			return
+		}
+		// read over each element
+		for i := 0; i < numElements; i++ {
+			dataInfoString, err := reader.ReadString(byte('\n'))
 			if err != nil {
-				break
+				fmt.Println("Error reading data", err)
+				break // don't return since we can still read other valid elements
 			}
-			if data == "" {
-				break
-			}
-			dataLength, err := strconv.Atoi(data[1:])
+			// remove delimiter
+			dataInfoString = strings.TrimSuffix(dataInfoString, "\r\n")
+			dataLength, err := strconv.Atoi(dataInfoString[1:])
 			if err != nil {
 				fmt.Println("Error processing data length", err)
+				break
 			}
-			switch data[0] {
+			dataType := dataInfoString[0]
+			switch dataType {
 			case '+':
 				// TODO
 			case '$':
@@ -85,15 +93,18 @@ func parseRESP(request []byte, conn net.Conn) {
 			case ':':
 				//TODO
 			default:
-				fmt.Println("Unknown request type", data)
+				fmt.Println("Unknown RESP data type:", dataType)
 			}
 		}
+		// read final crlf delimiter
+		readCRLF(reader)
 	}
 }
 
 func parseBulkString(reader io.Reader, dataLength int, conn net.Conn) {
 	dataBuffer := make([]byte, dataLength)
 	n, err := io.ReadFull(reader, dataBuffer)
+	readCRLF(reader)
 	if err != nil {
 		fmt.Println("Error reading data", err)
 	}
@@ -106,5 +117,14 @@ func parseBulkString(reader io.Reader, dataLength int, conn net.Conn) {
 		conn.Write([]byte("+PONG\r\n"))
 	default:
 		fmt.Println("Unknown simple string command")
+	}
+}
+
+func readCRLF(reader io.Reader) {
+	crlf := make([]byte, 2)
+	_, err := io.ReadFull(reader, crlf)
+	if err != nil {
+		fmt.Println("Error parsing crlf delimiter:", err)
+		return
 	}
 }
